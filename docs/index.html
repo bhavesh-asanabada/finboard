@@ -258,7 +258,7 @@
       document.getElementById('divider').classList.remove('hidden');
     }
 
-    // No APK/IPA assets found — show link to GitHub release page
+    // No APK/IPA assets found — show direct link to GitHub release page
     if (!hasAny) {
       var noAssets = document.getElementById('no-assets');
       noAssets.classList.remove('hidden');
@@ -269,15 +269,10 @@
         'View Release on GitHub →</a>';
     }
 
-    // Platform-specific view
+    // Show both install guides on all platforms (don't hide any buttons)
+    // On iOS, also show the iOS steps; on Android, keep Android steps visible
     if (isIOS) {
-      if (apkAsset) { document.getElementById('btn-android').classList.add('hidden'); document.getElementById('hint-android').classList.add('hidden'); }
-      document.getElementById('divider').classList.add('hidden');
-      document.getElementById('steps-android').classList.add('hidden');
       document.getElementById('steps-ios').classList.remove('hidden');
-    } else if (isAndroid) {
-      if (ipaAsset) { document.getElementById('btn-ios').classList.add('hidden'); document.getElementById('hint-ios').classList.add('hidden'); }
-      document.getElementById('divider').classList.add('hidden');
     }
 
     // Changelog
