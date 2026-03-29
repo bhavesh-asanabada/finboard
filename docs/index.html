@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>FinBoard — Install</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+       background:#0d1117;color:#e6edf3;min-height:100vh;
+       display:flex;flex-direction:column;align-items:center;
+       padding:40px 20px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:16px;
+        padding:32px 28px;max-width:440px;width:100%;text-align:center}
+  .logo{font-size:52px;margin-bottom:8px}
+  h1{font-size:28px;font-weight:700;margin-bottom:4px}
+  .version{color:#58a6ff;font-size:14px;margin-bottom:6px;font-weight:600}
+  .subtitle{color:#8b949e;font-size:13px;margin-bottom:28px}
+  .btn{display:flex;align-items:center;justify-content:center;gap:10px;
+       width:100%;padding:16px 24px;border-radius:12px;border:none;
+       font-size:17px;font-weight:600;cursor:pointer;
+       text-decoration:none;margin-bottom:12px;transition:all .2s}
+  .btn:hover{opacity:.85;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn-android{background:#3ddc84;color:#0d1117}
+  .btn-ios{background:#007aff;color:#fff}
+  .btn-release{background:#30363d;color:#e6edf3;font-size:14px;padding:12px 20px}
+  .btn-release:hover{background:#3d444d}
+  .btn-disabled{background:#21262d;color:#484f58;cursor:not-allowed;pointer-events:none}
+  .divider{display:flex;align-items:center;gap:12px;margin:18px 0;color:#484f58;font-size:12px;text-transform:uppercase;letter-spacing:1px}
+  .divider::before,.divider::after{content:'';flex:1;height:1px;background:#30363d}
+  .instructions{background:#0d1117;border-radius:10px;padding:16px;
+                 text-align:left;font-size:13px;color:#8b949e;line-height:1.8}
+  .instructions b{color:#e6edf3}
+  .instructions ol{padding-left:18px}
+  .instructions li{margin-bottom:4px}
+  .platform-hint{font-size:12px;color:#8b949e;margin-top:4px;margin-bottom:6px}
+  .hidden{display:none!important}
+  .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;margin-left:6px}
+  .badge-stable{background:#238636;color:#fff}
+  .badge-pre{background:#9e6a03;color:#fff}
+  .release-meta{font-size:12px;color:#484f58;margin-top:12px;line-height:1.6}
+  .release-meta a{color:#58a6ff;text-decoration:none}
+  .release-meta a:hover{text-decoration:underline}
+  .spinner{display:inline-block;width:20px;height:20px;border:2px solid #30363d;
+           border-top-color:#58a6ff;border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .loading-state{padding:40px 0;color:#8b949e}
+  .error-state{color:#f85149;padding:20px 0;font-size:14px}
+  .all-releases{margin-top:20px}
+  .all-releases a{color:#58a6ff;font-size:13px;text-decoration:none}
+  .all-releases a:hover{text-decoration:underline}
+  footer{margin-top:28px;color:#484f58;font-size:12px}
+  .changelog{background:#0d1117;border-radius:10px;padding:14px;text-align:left;
+             font-size:12px;color:#8b949e;line-height:1.7;margin-top:16px;
+             max-height:150px;overflow-y:auto;white-space:pre-wrap}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo">💰</div>
+  <h1>FinBoard</h1>
+  <p class="subtitle">Personal financial tracker with direct MongoDB connection</p>
+
+  <!-- Loading state -->
+  <div id="loading" class="loading-state">
+    <div class="spinner"></div>
+    <p style="margin-top:12px">Checking for latest release…</p>
+  </div>
+
+  <!-- No releases -->
+  <div id="no-release" class="hidden">
+    <p style="color:#8b949e;padding:20px 0;font-size:14px">
+      No releases published yet.<br>
+      Push a version tag (<code style="color:#58a6ff">v1.0.0</code>) to trigger the first build.
+    </p>
+    <a class="btn btn-release" href="https://github.com/bhavesh-asanabada/finboard/actions" target="_blank">
+      View GitHub Actions →
+    </a>
+  </div>
+
+  <!-- Error state -->
+  <div id="error" class="hidden error-state"></div>
+
+  <!-- Release found -->
+  <div id="release" class="hidden">
+    <div class="version">
+      <span id="rel-version"></span>
+      <span id="rel-badge" class="badge"></span>
+    </div>
+    <p class="subtitle" id="rel-date" style="margin-bottom:20px"></p>
+
+    <!-- Android -->
+    <a id="btn-android" class="btn btn-android hidden" href="#">
+      ⬇ &nbsp;Download APK
+    </a>
+    <p class="platform-hint hidden" id="hint-android">Direct install — no Play Store needed</p>
+
+    <div class="divider hidden" id="divider">or</div>
+
+    <!-- iOS -->
+    <a id="btn-ios" class="btn btn-ios hidden" href="#">
+      ⬇ &nbsp;Install on iPhone / iPad
+    </a>
+    <p class="platform-hint hidden" id="hint-ios">Ad-hoc — UDID must be registered</p>
+
+    <!-- No APK/IPA found -->
+    <div id="no-assets" class="hidden">
+      <p style="color:#8b949e;font-size:13px;padding:8px 0">
+        Build artifacts not attached to this release yet.
+      </p>
+    </div>
+
+    <!-- Platform instructions -->
+    <div class="divider" id="divider-steps"><span>how to install</span></div>
+
+    <div class="instructions" id="steps-android">
+      <ol>
+        <li>Tap <b>Download APK</b> above</li>
+        <li>Open the downloaded <code>.apk</code> file</li>
+        <li>If prompted, go to <b>Settings → Apps → Install unknown apps</b> and allow your browser</li>
+        <li>Tap <b>Install</b></li>
+      </ol>
+    </div>
+    <div class="instructions hidden" id="steps-ios">
+      <ol>
+        <li>Tap <b>Install on iPhone / iPad</b></li>
+        <li>iOS will prompt <i>"Install FinBoard?"</i> — tap <b>Install</b></li>
+        <li>Go to <b>Settings → General → VPN &amp; Device Management</b></li>
+        <li><b>Trust</b> the developer certificate, then open FinBoard</li>
+      </ol>
+    </div>
+
+    <!-- Changelog -->
+    <div id="changelog-section" class="hidden">
+      <div class="divider">what's new</div>
+      <div class="changelog" id="changelog-body"></div>
+    </div>
+
+    <!-- View on GitHub -->
+    <div class="release-meta">
+      <a id="rel-link" href="#" target="_blank">View full release on GitHub →</a>
+    </div>
+  </div>
+
+  <!-- All releases link -->
+  <div class="all-releases">
+    <a href="https://github.com/bhavesh-asanabada/finboard/releases" target="_blank">
+      Browse all releases
+    </a>
+  </div>
+</div>
+
+<footer>Built with Flutter &amp; GitHub Actions</footer>
+
+<script>
+(function() {
+  var REPO = 'bhavesh-asanabada/finboard';
+  var API  = 'https://api.github.com/repos/' + REPO + '/releases/latest';
+  var ua   = navigator.userAgent;
+  var isIOS     = /iPad|iPhone|iPod/.test(ua);
+  var isAndroid = /Android/.test(ua);
+
+  var $loading   = document.getElementById('loading');
+  var $noRelease = document.getElementById('no-release');
+  var $error     = document.getElementById('error');
+  var $release   = document.getElementById('release');
+
+  fetch(API)
+    .then(function(res) {
+      if (res.status === 404) { showNoRelease(); return null; }
+      if (!res.ok) throw new Error('GitHub API error: ' + res.status);
+      return res.json();
+    })
+    .then(function(data) {
+      if (!data) return;
+      showRelease(data);
+    })
+    .catch(function(err) {
+      $loading.classList.add('hidden');
+      $error.classList.remove('hidden');
+      $error.textContent = 'Could not fetch release info. ' + err.message;
+    });
+
+  function showNoRelease() {
+    $loading.classList.add('hidden');
+    $noRelease.classList.remove('hidden');
+  }
+
+  function showRelease(rel) {
+    $loading.classList.add('hidden');
+    $release.classList.remove('hidden');
+
+    // Version & badge
+    document.getElementById('rel-version').textContent = rel.tag_name;
+    var badge = document.getElementById('rel-badge');
+    if (rel.prerelease) {
+      badge.textContent = 'pre-release';
+      badge.className = 'badge badge-pre';
+    } else {
+      badge.textContent = 'stable';
+      badge.className = 'badge badge-stable';
+    }
+
+    // Date
+    var d = new Date(rel.published_at);
+    document.getElementById('rel-date').textContent =
+      'Released ' + d.toLocaleDateString(undefined, { year:'numeric', month:'long', day:'numeric' });
+
+    // Release link
+    document.getElementById('rel-link').href = rel.html_url;
+
+    // Find APK and IPA assets
+    var apkAsset = null, ipaAsset = null;
+    (rel.assets || []).forEach(function(a) {
+      var name = a.name.toLowerCase();
+      if (name.endsWith('.apk')) apkAsset = a;
+      if (name.endsWith('.ipa')) ipaAsset = a;
+    });
+
+    var hasAny = false;
+
+    // Android button
+    if (apkAsset) {
+      var btnAndroid = document.getElementById('btn-android');
+      btnAndroid.href = apkAsset.browser_download_url;
+      btnAndroid.classList.remove('hidden');
+      var sizeMB = (apkAsset.size / 1048576).toFixed(1);
+      btnAndroid.innerHTML = '⬇ &nbsp;Download APK <span style="font-size:12px;opacity:.7">(' + sizeMB + ' MB)</span>';
+      document.getElementById('hint-android').classList.remove('hidden');
+      hasAny = true;
+    }
+
+    // iOS button — use itms-services manifest hosted alongside this page
+    if (ipaAsset) {
+      var version = rel.tag_name.replace(/^v/, '');
+      var plistUrl = window.location.origin + window.location.pathname.replace(/\/index\.html$/, '')
+                     + '/install-' + version + '.plist';
+      var btnIos = document.getElementById('btn-ios');
+      // Try itms-services first; fallback to direct IPA download
+      btnIos.href = 'itms-services://?action=download-manifest&url=' + encodeURIComponent(plistUrl);
+      btnIos.classList.remove('hidden');
+      document.getElementById('hint-ios').classList.remove('hidden');
+      hasAny = true;
+    }
+
+    // Show divider between buttons
+    if (apkAsset && ipaAsset) {
+      document.getElementById('divider').classList.remove('hidden');
+    }
+
+    // No assets found
+    if (!hasAny) {
+      document.getElementById('no-assets').classList.remove('hidden');
+    }
+
+    // Platform-specific view
+    if (isIOS) {
+      if (apkAsset) { document.getElementById('btn-android').classList.add('hidden'); document.getElementById('hint-android').classList.add('hidden'); }
+      document.getElementById('divider').classList.add('hidden');
+      document.getElementById('steps-android').classList.add('hidden');
+      document.getElementById('steps-ios').classList.remove('hidden');
+    } else if (isAndroid) {
+      if (ipaAsset) { document.getElementById('btn-ios').classList.add('hidden'); document.getElementById('hint-ios').classList.add('hidden'); }
+      document.getElementById('divider').classList.add('hidden');
+    }
+
+    // Changelog
+    var body = (rel.body || '').trim();
+    if (body) {
+      document.getElementById('changelog-section').classList.remove('hidden');
+      // Simple markdown-to-text: strip headers, keep bullet points
+      var clean = body
+        .replace(/^#{1,4}\s+/gm, '')
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/`(.*?)`/g, '$1');
+      document.getElementById('changelog-body').textContent = clean;
+    }
+  }
+})();
+</script>
+
+</body>
+</html>
