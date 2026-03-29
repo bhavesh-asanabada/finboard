@@ -157,7 +157,8 @@
 <script>
 (function() {
   var REPO = 'bhavesh-asanabada/finboard';
-  var API  = 'https://api.github.com/repos/' + REPO + '/releases/latest';
+  var API_LATEST = 'https://api.github.com/repos/' + REPO + '/releases/latest';
+  var API_ALL    = 'https://api.github.com/repos/' + REPO + '/releases?per_page=5';
   var ua   = navigator.userAgent;
   var isIOS     = /iPad|iPhone|iPod/.test(ua);
   var isAndroid = /Android/.test(ua);
@@ -167,14 +168,21 @@
   var $error     = document.getElementById('error');
   var $release   = document.getElementById('release');
 
-  fetch(API)
+  // Try /releases/latest first (stable only), then fall back to all releases
+  fetch(API_LATEST)
     .then(function(res) {
-      if (res.status === 404) { showNoRelease(); return null; }
-      if (!res.ok) throw new Error('GitHub API error: ' + res.status);
-      return res.json();
+      if (res.ok) return res.json();
+      // /latest returns 404 when only pre-releases exist — try all releases
+      return fetch(API_ALL).then(function(res2) {
+        if (!res2.ok) throw new Error('GitHub API error: ' + res2.status);
+        return res2.json();
+      }).then(function(releases) {
+        if (!releases || releases.length === 0) return null;
+        return releases[0]; // most recent release (incl. pre-release)
+      });
     })
     .then(function(data) {
-      if (!data) return;
+      if (!data) { showNoRelease(); return; }
       showRelease(data);
     })
     .catch(function(err) {
@@ -250,9 +258,15 @@
       document.getElementById('divider').classList.remove('hidden');
     }
 
-    // No assets found
+    // No APK/IPA assets found — show link to GitHub release page
     if (!hasAny) {
-      document.getElementById('no-assets').classList.remove('hidden');
+      var noAssets = document.getElementById('no-assets');
+      noAssets.classList.remove('hidden');
+      noAssets.innerHTML = '<p style="color:#8b949e;font-size:13px;padding:8px 0">' +
+        'Build artifacts (APK/IPA) are not attached to this release yet.<br>' +
+        'The build may still be running or signing secrets may not be configured.</p>' +
+        '<a class="btn btn-release" href="' + rel.html_url + '" target="_blank" style="margin-top:8px">' +
+        'View Release on GitHub →</a>';
     }
 
     // Platform-specific view
