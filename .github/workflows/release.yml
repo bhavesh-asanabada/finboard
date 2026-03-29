@@ -1,0 +1,576 @@
+name: 🚀 Release & Distribute
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'        # production: v1.2.3
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'       # pre-release: v1.2.3-beta.1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g. 1.2.3 or 1.2.3-beta.1)'
+        required: true
+        type: string
+      release_notes:
+        description: 'Release notes (optional)'
+        required: false
+        default: ''
+
+# ─────────────────────────────────────────────────────────────
+# Required GitHub Secrets (Settings → Secrets and variables → Actions)
+#
+#   Android signing (optional – skip for debug builds):
+#     ANDROID_KEYSTORE          – base64-encoded .jks keystore file
+#     ANDROID_KEY_ALIAS         – key alias
+#     ANDROID_KEY_PASSWORD      – key password
+#     ANDROID_STORE_PASSWORD    – keystore password
+#
+#   iOS signing (optional – skip to build without code-signing):
+#     APPLE_CERTIFICATE         – base64-encoded .p12 certificate
+#     APPLE_CERTIFICATE_PASSWORD – .p12 export password
+#     APPLE_PROVISIONING_PROFILE – base64-encoded .mobileprovision (ad-hoc)
+#     APPLE_TEAM_ID             – 10-character Apple Developer Team ID
+#     KEYCHAIN_PASSWORD         – temporary macOS keychain password (any string)
+#
+#   Firebase App Distribution (optional):
+#     FIREBASE_ANDROID_APP_ID   – Android App ID (from Firebase console)
+#     FIREBASE_IOS_APP_ID       – iOS App ID (from Firebase console)
+#     FIREBASE_SERVICE_ACCOUNT  – JSON content of service account key
+#
+# Required GitHub Variables (Settings → Secrets and variables → Variables):
+#     FIREBASE_DISTRIBUTION_ENABLED – 'true' to enable Firebase distribution
+#     FIREBASE_DISTRIBUTION_GROUPS  – comma-separated tester groups (default: testers)
+# ─────────────────────────────────────────────────────────────
+
+env:
+  FLUTTER_CHANNEL: stable
+  APP_NAME: FinBoard
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────────
+  # 1. Extract version & build number
+  # ────────────────────────────────────────────────────────────
+  prepare:
+    name: 📋 Prepare Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      build_number: ${{ steps.extract.outputs.build_number }}
+      tag: ${{ steps.extract.outputs.tag }}
+      is_prerelease: ${{ steps.extract.outputs.is_prerelease }}
+    steps:
+      - name: Extract version info
+        id: extract
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          fi
+          BUILD_NUMBER=${{ github.run_number }}
+          IS_PRERELEASE="false"
+          if [[ "${VERSION}" == *"-"* ]]; then IS_PRERELEASE="true"; fi
+          echo "version=${VERSION}"        >> $GITHUB_OUTPUT
+          echo "build_number=${BUILD_NUMBER}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}"               >> $GITHUB_OUTPUT
+          echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
+          echo "### 📋 Version Info" >> $GITHUB_STEP_SUMMARY
+          echo "| Key | Value |"     >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|"           >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${VERSION}\` |"         >> $GITHUB_STEP_SUMMARY
+          echo "| Build   | \`${BUILD_NUMBER}\` |"    >> $GITHUB_STEP_SUMMARY
+          echo "| Tag     | \`${TAG}\` |"             >> $GITHUB_STEP_SUMMARY
+          echo "| Pre-release | \`${IS_PRERELEASE}\` |" >> $GITHUB_STEP_SUMMARY
+
+  # ────────────────────────────────────────────────────────────
+  # 2. Build Android
+  # ────────────────────────────────────────────────────────────
+  build-android:
+    name: 🤖 Build Android
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Update pubspec.yaml version
+        run: |
+          V="${{ needs.prepare.outputs.version }}"
+          B="${{ needs.prepare.outputs.build_number }}"
+          sed -i "s/^version:.*/version: ${V}+${B}/" pubspec.yaml
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Setup Android signing
+        if: ${{ env.KEYSTORE_FILE != '' }}
+        env:
+          KEYSTORE_FILE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE }}" | base64 -d > android/app/keystore.jks
+          cat >> android/key.properties << EOF
+          storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=keystore.jks
+          EOF
+
+      - name: Build APK
+        run: |
+          flutter build apk --release \
+            --build-name="${{ needs.prepare.outputs.version }}" \
+            --build-number="${{ needs.prepare.outputs.build_number }}"
+
+      - name: Build App Bundle (AAB)
+        run: |
+          flutter build appbundle --release \
+            --build-name="${{ needs.prepare.outputs.version }}" \
+            --build-number="${{ needs.prepare.outputs.build_number }}"
+
+      - name: Rename outputs
+        run: |
+          V="${{ needs.prepare.outputs.version }}"
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             build/app/outputs/flutter-apk/finboard-${V}.apk
+          mv build/app/outputs/bundle/release/app-release.aab \
+             build/app/outputs/bundle/release/finboard-${V}.aab
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: build/app/outputs/flutter-apk/finboard-*.apk
+          retention-days: 7
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: build/app/outputs/bundle/release/finboard-*.aab
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────
+  # 3. Build iOS
+  # ────────────────────────────────────────────────────────────
+  build-ios:
+    name: 🍎 Build iOS
+    runs-on: macos-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Update pubspec.yaml version
+        run: |
+          V="${{ needs.prepare.outputs.version }}"
+          B="${{ needs.prepare.outputs.build_number }}"
+          sed -i '' "s/^version:.*/version: ${V}+${B}/" pubspec.yaml
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ── iOS Signing (skipped if secrets are not configured) ──
+      - name: Import signing certificate
+        id: signing
+        if: ${{ env.CERT != '' }}
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain"
+          security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          # Import .p12 certificate
+          echo "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode -o "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" \
+            -T /usr/bin/codesign
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s \
+            -k "${{ secrets.KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          # Install provisioning profile
+          echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 --decode \
+            -o "$RUNNER_TEMP/profile.mobileprovision"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$RUNNER_TEMP/profile.mobileprovision" \
+            ~/Library/MobileDevice/Provisioning\ Profiles/
+          echo "configured=true" >> $GITHUB_OUTPUT
+
+      - name: Build IPA (signed)
+        if: steps.signing.outputs.configured == 'true'
+        run: |
+          flutter build ipa --release \
+            --build-name="${{ needs.prepare.outputs.version }}" \
+            --build-number="${{ needs.prepare.outputs.build_number }}" \
+            --export-options-plist=ios/ExportOptions.plist
+
+      - name: Build iOS archive (unsigned – for CI visibility)
+        if: steps.signing.outputs.configured != 'true'
+        run: |
+          flutter build ios --release --no-codesign \
+            --build-name="${{ needs.prepare.outputs.version }}" \
+            --build-number="${{ needs.prepare.outputs.build_number }}"
+          echo "⚠️  IPA skipped: APPLE_CERTIFICATE secret not configured." >> $GITHUB_STEP_SUMMARY
+          echo "    Add signing secrets to enable ad-hoc IPA distribution." >> $GITHUB_STEP_SUMMARY
+
+      - name: Rename IPA
+        if: steps.signing.outputs.configured == 'true'
+        run: |
+          V="${{ needs.prepare.outputs.version }}"
+          mv build/ios/ipa/*.ipa build/ios/ipa/finboard-${V}.ipa
+
+      - name: Upload IPA artifact
+        if: steps.signing.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: build/ios/ipa/finboard-*.ipa
+          retention-days: 7
+
+      - name: Clean up keychain
+        if: always() && steps.signing.outputs.configured == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/build.keychain" || true
+
+  # ────────────────────────────────────────────────────────────
+  # 4. Create GitHub Release
+  # ────────────────────────────────────────────────────────────
+  release:
+    name: 📦 Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [prepare, build-android, build-ios]
+    if: always() && needs.build-android.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed for git log
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate changelog from git log
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | sed -n '2p' || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges | head -30)
+          else
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | head -20)
+          fi
+          # Escape for multiline output
+          {
+            echo 'commits<<EOF'
+            echo "${COMMITS}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write release notes
+        run: |
+          V="${{ needs.prepare.outputs.version }}"
+          B="${{ needs.prepare.outputs.build_number }}"
+          USER_NOTES="${{ github.event.inputs.release_notes }}"
+          REPO="${{ github.repository }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          INSTALL_PAGE="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          cat > release_notes.md << END_NOTES
+          ## ${{ env.APP_NAME }} v${V}
+
+          $([ -n "${USER_NOTES}" ] && echo "${USER_NOTES}" && echo "")
+          ### 📝 What's Changed
+          ${{ steps.changelog.outputs.commits }}
+
+          ---
+          ### 📲 Direct Install — No App Store Required
+
+          > **Easiest option:** Open this link on your phone:
+          > ### 👉 [${INSTALL_PAGE}](${INSTALL_PAGE})
+          > The page auto-detects Android / iOS and shows the right install button.
+
+          **Android (manual):**
+          1. Download [\`finboard-${V}.apk\`](${BASE_URL}/finboard-${V}.apk) from **Assets** below  
+          2. Open the file on your device → tap **Install**  
+          3. If blocked: **Settings → Apps → Special access → Install unknown apps** → allow Files/browser
+
+          **iOS (manual ad-hoc):**
+          1. Download [\`finboard-${V}.ipa\`](${BASE_URL}/finboard-${V}.ipa)  
+          2. Install via **AltStore**, **Sideloadly**, or **Apple Configurator 2** (UDID must be registered)
+
+          ---
+          ### 🔢 Build Info
+          | | |
+          |---|---|
+          | Version | \`${V}\` |
+          | Build | \`${B}\` |
+          | Commit | \`${{ github.sha }}\` |
+          | Flutter | \`${{ env.FLUTTER_CHANNEL }}\` |
+          END_NOTES
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: "${{ env.APP_NAME }} v${{ needs.prepare.outputs.version }}"
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ needs.prepare.outputs.is_prerelease == 'true' }}
+          files: |
+            artifacts/android-apk/*.apk
+            artifacts/android-aab/*.aab
+            artifacts/ios-ipa/*.ipa
+          fail_on_unmatched_files: false
+
+  # ────────────────────────────────────────────────────────────
+  # 5. Publish GitHub Pages install page (no app store needed)
+  # ────────────────────────────────────────────────────────────
+  publish-install-page:
+    name: 🌐 Publish Install Page
+    runs-on: ubuntu-latest
+    needs: [prepare, build-android, build-ios, release]
+    if: always() && needs.build-android.result == 'success'
+    permissions:
+      contents: write   # push to gh-pages branch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Generate install page
+        run: |
+          V="${{ needs.prepare.outputs.version }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
+          APK_URL="${BASE_URL}/finboard-${V}.apk"
+          IPA_URL="${BASE_URL}/finboard-${V}.ipa"
+          # The itms-services plist is hosted on gh-pages alongside the HTML
+          PLIST_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/install-${V}.plist"
+          mkdir -p gh-pages-out
+          # ── iOS OTA manifest plist ──────────────────────────────
+          cat > gh-pages-out/install-${V}.plist << PLIST_EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>items</key><array><dict>
+              <key>assets</key><array><dict>
+                <key>kind</key><string>software-package</string>
+                <key>url</key><string>${IPA_URL}</string>
+              </dict></array>
+              <key>metadata</key><dict>
+                <key>bundle-identifier</key><string>com.finboard.app</string>
+                <key>bundle-version</key><string>${V}</string>
+                <key>kind</key><string>software</string>
+                <key>title</key><string>FinBoard</string>
+              </dict>
+            </dict></array>
+          </dict></plist>
+          PLIST_EOF
+          # ── Install HTML page ───────────────────────────────────
+          cat > gh-pages-out/index.html << HTML_EOF
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+          <meta charset="UTF-8"/>
+          <meta name="viewport" content="width=device-width,initial-scale=1"/>
+          <title>FinBoard ${V} — Install</title>
+          <style>
+            *{box-sizing:border-box;margin:0;padding:0}
+            body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                 background:#0d1117;color:#e6edf3;min-height:100vh;
+                 display:flex;flex-direction:column;align-items:center;
+                 padding:40px 20px}
+            .card{background:#161b22;border:1px solid #30363d;border-radius:16px;
+                  padding:32px 28px;max-width:420px;width:100%;text-align:center}
+            .logo{font-size:48px;margin-bottom:8px}
+            h1{font-size:26px;font-weight:700;margin-bottom:4px}
+            .version{color:#8b949e;font-size:14px;margin-bottom:32px}
+            .btn{display:flex;align-items:center;justify-content:center;gap:10px;
+                 width:100%;padding:16px 24px;border-radius:12px;border:none;
+                 font-size:17px;font-weight:600;cursor:pointer;
+                 text-decoration:none;margin-bottom:14px;transition:opacity .15s}
+            .btn:hover{opacity:.85}
+            .btn-android{background:#3ddc84;color:#000}
+            .btn-ios{background:#007aff;color:#fff}
+            .divider{display:flex;align-items:center;gap:12px;margin:20px 0;color:#8b949e;font-size:13px}
+            .divider::before,.divider::after{content:'';flex:1;height:1px;background:#30363d}
+            .instructions{background:#0d1117;border-radius:10px;padding:16px;
+                           text-align:left;font-size:13px;color:#8b949e;line-height:1.7}
+            .instructions b{color:#e6edf3}
+            .platform-hint{font-size:12px;color:#8b949e;margin-top:6px}
+            .hidden{display:none!important}
+            .release-link{color:#58a6ff;font-size:13px;text-decoration:none;margin-top:20px;display:inline-block}
+            .release-link:hover{text-decoration:underline}
+            footer{margin-top:28px;color:#484f58;font-size:12px}
+          </style>
+          </head>
+          <body>
+          <div class="card">
+            <div class="logo">💰</div>
+            <h1>FinBoard</h1>
+            <div class="version">Version ${V} — Direct Install</div>
+
+            <!-- Android button (shown on Android or unknown) -->
+            <a id="btn-android" class="btn btn-android" href="${APK_URL}" download>
+              <span>⬇</span> Download APK
+            </a>
+            <p class="platform-hint" id="hint-android">For Android devices — no Play Store needed</p>
+
+            <div class="divider" id="divider-ios">or</div>
+
+            <!-- iOS OTA button (itms-services: triggers system installer) -->
+            <a id="btn-ios" class="btn btn-ios"
+               href="itms-services://?action=download-manifest&url=${PLIST_URL}">
+              <span>⬇</span> Install on iPhone / iPad
+            </a>
+            <p class="platform-hint" id="hint-ios">
+              Ad-hoc install — your UDID must be registered in the provisioning profile
+            </p>
+
+            <div class="divider">steps</div>
+
+            <!-- Platform-specific instructions, swapped by JS -->
+            <div class="instructions" id="steps-android">
+              <b>How to install the APK:</b><br>
+              1. Tap <b>Download APK</b> above<br>
+              2. Once downloaded, open the file<br>
+              3. Go to <b>Settings → Apps → Special access → Install unknown apps</b> and allow your browser / Files app<br>
+              4. Tap <b>Install</b> in the prompted dialog
+            </div>
+            <div class="instructions hidden" id="steps-ios">
+              <b>How to install on iOS:</b><br>
+              1. Tap <b>Install on iPhone / iPad</b> above<br>
+              2. iOS will ask <i>"Would you like to install FinBoard?"</i> — tap <b>Install</b><br>
+              3. Go to <b>Settings → General → VPN &amp; Device Management</b> and <b>Trust</b> the developer certificate<br>
+              4. Open FinBoard from your Home Screen
+            </div>
+
+            <a class="release-link"
+               href="https://github.com/${REPO}/releases/tag/${TAG}">
+              View full release notes on GitHub →
+            </a>
+          </div>
+          <footer>Built with GitHub Actions · FinBoard ${V}</footer>
+
+          <script>
+            var ua = navigator.userAgent;
+            var isIOS = /iPad|iPhone|iPod/.test(ua);
+            var isAndroid = /Android/.test(ua);
+            if (isIOS) {
+              document.getElementById('btn-android').classList.add('hidden');
+              document.getElementById('hint-android').classList.add('hidden');
+              document.getElementById('divider-ios').classList.add('hidden');
+              document.getElementById('steps-android').classList.add('hidden');
+              document.getElementById('steps-ios').classList.remove('hidden');
+            } else if (isAndroid) {
+              document.getElementById('btn-ios').classList.add('hidden');
+              document.getElementById('hint-ios').classList.add('hidden');
+              document.getElementById('divider-ios').classList.add('hidden');
+            }
+          </script>
+          </body>
+          </html>
+          HTML_EOF
+          # Also write a latest-redirect so the URL never changes
+          cp gh-pages-out/index.html gh-pages-out/latest.html
+          echo "INSTALL_PAGE_URL=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> $GITHUB_ENV
+          echo "### 📲 Install page" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" >> $GITHUB_STEP_SUMMARY
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: gh-pages-out
+          keep_files: true          # keep previous version pages
+          commit_message: "docs: install page for ${{ needs.prepare.outputs.tag }}"
+
+  # ────────────────────────────────────────────────────────────
+  # 6. Firebase App Distribution (optional)
+  # ────────────────────────────────────────────────────────────
+  distribute-android:
+    name: 🚒 Firebase — Android
+    runs-on: ubuntu-latest
+    needs: [prepare, build-android]
+    if: |
+      needs.build-android.result == 'success' &&
+      vars.FIREBASE_DISTRIBUTION_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: artifacts/
+
+      - name: Distribute via Firebase
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: ${{ vars.FIREBASE_DISTRIBUTION_GROUPS || 'testers' }}
+          file: artifacts/finboard-${{ needs.prepare.outputs.version }}.apk
+          releaseNotes: |
+            ${{ env.APP_NAME }} v${{ needs.prepare.outputs.version }}
+            Build ${{ needs.prepare.outputs.build_number }}
+
+  distribute-ios:
+    name: 🚒 Firebase — iOS
+    runs-on: ubuntu-latest
+    needs: [prepare, build-ios]
+    if: |
+      needs.build-ios.result == 'success' &&
+      vars.FIREBASE_DISTRIBUTION_ENABLED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download IPA
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-ipa
+          path: artifacts/
+        continue-on-error: true
+
+      - name: Distribute via Firebase
+        if: hashFiles('artifacts/*.ipa') != ''
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_IOS_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: ${{ vars.FIREBASE_DISTRIBUTION_GROUPS || 'testers' }}
+          file: artifacts/finboard-${{ needs.prepare.outputs.version }}.ipa
+          releaseNotes: |
+            ${{ env.APP_NAME }} v${{ needs.prepare.outputs.version }}
+            Build ${{ needs.prepare.outputs.build_number }}

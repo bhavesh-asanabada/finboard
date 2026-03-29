@@ -1,0 +1,106 @@
+name: 🔖 Bump Version & Tag
+
+# Manually trigger to create a new versioned release tag.
+# This updates pubspec.yaml, commits the change, then pushes a vX.Y.Z tag
+# which automatically triggers the release workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch      # 1.0.0 → 1.0.1
+          - minor      # 1.0.0 → 1.1.0
+          - major      # 1.0.0 → 2.0.0
+          - custom     # provide exact version below
+        default: patch
+      custom_version:
+        description: 'Custom version (only used when bump_type = custom, e.g. 1.2.3-beta.1)'
+        required: false
+        default: ''
+      prerelease_suffix:
+        description: 'Pre-release suffix for patch/minor/major bumps (e.g. beta.1). Leave blank for stable.'
+        required: false
+        default: ''
+
+jobs:
+  bump:
+    name: Bump Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute next version
+        id: version
+        run: |
+          BUMP_TYPE="${{ github.event.inputs.bump_type }}"
+          CUSTOM="${{ github.event.inputs.custom_version }}"
+          SUFFIX="${{ github.event.inputs.prerelease_suffix }}"
+
+          # Read current version from pubspec.yaml (strip build number if any)
+          CURRENT=$(grep '^version:' pubspec.yaml | sed 's/version: *//' | cut -d'+' -f1)
+          echo "Current version: ${CURRENT}"
+
+          IFS='.' read -ra PARTS <<< "$CURRENT"
+          MAJOR="${PARTS[0]:-0}"
+          MINOR="${PARTS[1]:-0}"
+          PATCH="${PARTS[2]:-0}"
+          # Strip any pre-release from patch (e.g. "0-beta.1" → "0")
+          PATCH="${PATCH%%-*}"
+
+          if [ "$BUMP_TYPE" = "custom" ]; then
+            if [ -z "$CUSTOM" ]; then
+              echo "Error: custom_version is required when bump_type=custom"
+              exit 1
+            fi
+            NEXT="$CUSTOM"
+          elif [ "$BUMP_TYPE" = "major" ]; then
+            NEXT="$((MAJOR+1)).0.0"
+          elif [ "$BUMP_TYPE" = "minor" ]; then
+            NEXT="${MAJOR}.$((MINOR+1)).0"
+          else  # patch (default)
+            NEXT="${MAJOR}.${MINOR}.$((PATCH+1))"
+          fi
+
+          # Append pre-release suffix if provided
+          if [ -n "$SUFFIX" ] && [ "$BUMP_TYPE" != "custom" ]; then
+            NEXT="${NEXT}-${SUFFIX}"
+          fi
+
+          echo "Next version: ${NEXT}"
+          echo "version=${NEXT}" >> $GITHUB_OUTPUT
+          echo "tag=v${NEXT}"    >> $GITHUB_OUTPUT
+
+      - name: Update pubspec.yaml
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          B="${{ github.run_number }}"
+          sed -i "s/^version:.*/version: ${V}+${B}/" pubspec.yaml
+          echo "Updated pubspec.yaml to version: ${V}+${B}"
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit version bump
+        run: |
+          git add pubspec.yaml
+          git commit -m "chore: bump version to ${{ steps.version.outputs.version }} [skip ci]"
+
+      - name: Create and push tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin HEAD:${{ github.ref_name }} --follow-tags
+          echo "### ✅ Tagged $TAG" >> $GITHUB_STEP_SUMMARY
+          echo "The release workflow will start automatically." >> $GITHUB_STEP_SUMMARY

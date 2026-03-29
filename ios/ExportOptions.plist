@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ExportOptions.plist — iOS Ad-Hoc IPA export configuration.
+
+  Before using GitHub Actions iOS signing, replace the placeholder values:
+    - APPLE_TEAM_ID_PLACEHOLDER  → Your 10-character Apple Developer Team ID
+    - BUNDLE_ID_PLACEHOLDER      → Your app bundle identifier (e.g. com.yourname.finboard)
+
+  You can also use "development" or "app-store" as the method:
+    - ad-hoc     → for direct install on registered UDIDs (best for beta testers)
+    - app-store  → for TestFlight / App Store submission
+    - development → for debugging on registered devices
+-->
+<plist version="1.0">
+<dict>
+  <!-- Distribution method -->
+  <key>method</key>
+  <string>ad-hoc</string>
+
+  <!-- Your Apple Developer Team ID (10 characters, found in developer.apple.com) -->
+  <key>teamID</key>
+  <string>APPLE_TEAM_ID_PLACEHOLDER</string>
+
+  <!-- Bundle identifier of the app -->
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>BUNDLE_ID_PLACEHOLDER</key>
+    <string>FinBoard Ad Hoc</string>
+  </dict>
+
+  <!-- Set to true to allow managing version/build from Xcode -->
+  <key>manageAppVersionAndBuildNumber</key>
+  <false/>
+
+  <!-- Strip Swift symbols to reduce IPA size -->
+  <key>stripSwiftSymbols</key>
+  <true/>
+
+  <!-- Upload debug symbols to Apple -->
+  <key>uploadSymbols</key>
+  <true/>
+
+  <!-- Compress PNG files -->
+  <key>compileBitcode</key>
+  <false/>
+
+  <key>thinning</key>
+  <string>&lt;none&gt;</string>
+</dict>
+</plist>
